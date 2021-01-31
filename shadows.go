@@ -96,11 +96,11 @@ func (r RadGrad) Bounds() image.Rectangle { return image.Rect(-1e9, -1e9, 1e9, 1
 
 func (r RadGrad) At(x, y int) color.Color {
     v := image.Pt(x, y).Sub(r.Opaque)
-    vLen := intSqrt(v.X*v.X + v.Y*v.Y)
-    if vLen >= r.Radius {
+    v2 := v.X*v.X + v.Y*v.Y
+    if v2 >= r.Radius*r.Radius {
         return color.Alpha{}
     }
-    return color.Alpha{A: uint8(255 - 255*vLen/r.Radius)}
+    return color.Alpha{A: uint8(255 - 255*intSqrt(v2)/r.Radius)}
 }
 
 func intSqrt(x int) int {

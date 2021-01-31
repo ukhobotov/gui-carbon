@@ -10,9 +10,9 @@ import (
     "golang.org/x/image/math/fixed"
 )
 
-func DrawText(d draw.Image, r image.Rectangle, s string, c color.Color, ts *TextStyle) {
-    if ts == nil {
-        ts = BodyShort16()
+func DrawText(d draw.Image, r image.Rectangle, s string, c color.Color, ts TextStyle) {
+    if c == nil {
+        panic("drawing text with a nil color")
     }
     
     clip := image.Rect(r.Min.X, r.Min.Y, r.Max.X, r.Max.Y)

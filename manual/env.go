@@ -13,9 +13,11 @@ type Env struct {
     Hidden bool
 }
 
+var EventsCap = 4
+
 func NewEnv(draw chan<- func(d draw.Image) image.Rectangle) *Env {
     return &Env{
-        events: make(chan gui.Event),
+        events: make(chan gui.Event, EventsCap),
         draw:   draw,
     }
 }
@@ -28,15 +30,11 @@ func (e *Env) Draw() chan<- func(draw.Image) image.Rectangle {
     return e.draw
 }
 
-func (e *Env) Close() {
-    close(e.events)
-}
-
 func (e *Env) Entry() chan<- gui.Event {
     return e.events
 }
 
-func SendShown(event gui.Event, envs ...*Env) {
+func SendVisible(event gui.Event, envs ...*Env) {
     for _, env := range envs {
         if env != nil && !env.Hidden {
             env.events <- event

@@ -5,98 +5,57 @@ import (
     "image/color"
     "image/draw"
     
-    "github.com/srwiley/oksvg"
     "github.com/ukhobotov/gui"
     "github.com/ukhobotov/gui/win"
 )
 
-func TextButton(env gui.Env, bs *ButtonStyle, text string, act chan<- gui.Event) {
-    Button(env, bs, text, nil, act)
+func TextButton(env gui.Env, bs *ButtonStyle, text string, click chan<- win.MoUp) {
+    Button(env, bs, text, Icon{}, click)
 }
 
-func IconButton(env gui.Env, bs *ButtonStyle, icon *oksvg.SvgIcon, act chan<- gui.Event) {
-    Button(env, bs, "", icon, act)
+func IconButton(env gui.Env, bs *ButtonStyle, icon Icon, click chan<- win.MoUp) {
+    Button(env, bs, "", icon, click)
 }
 
-func Button(env gui.Env, bs *ButtonStyle, text string, icon *oksvg.SvgIcon, act chan<- gui.Event) {
+func Button(env gui.Env, bs *ButtonStyle, text string, icon Icon, click chan<- win.MoUp) {
     if bs == nil {
         panic("launching button with a nil style")
     }
     var (
-        r image.Rectangle
-        b = buttonData{
-            text:  text,
-            icon:  icon,
-            style: bs,
-        }
+        r     image.Rectangle
+        state State
     )
-    
-    in := make(chan gui.Event)
-    go gui.StartQueue(in, act)
     
     for event := range env.Events() {
         switch e := event.(type) {
         case gui.Resize:
             r = e.Bounds()
-            env.Draw() <- drawButton(r, b)
+            env.Draw() <- drawButton(r, text, icon, *bs, state)
         case win.MoMove:
             switch {
-            case e.In(r) && !b.hovered:
-                in <- event
-                b.hovered = true
-                env.Draw() <- drawButton(r, b)
-            case !e.In(r) && b.hovered:
-                b.hovered = false
-                b.pressed = false
-                env.Draw() <- drawButton(r, b)
+            case e.In(r) && state&Hover == 0:
+                state |= Hover
+                env.Draw() <- drawButton(r, text, icon, *bs, state)
+            case !e.In(r) && state&Hover != 0:
+                state &^= Hover | Active
+                env.Draw() <- drawButton(r, text, icon, *bs, state)
             }
         case win.MoDown:
             switch {
             case e.In(r):
-                in <- event
-                b.pressed = true
-                b.focused = true
-                env.Draw() <- drawButton(r, b)
-            case !e.In(r) && b.focused:
-                b.focused = false
-                env.Draw() <- drawButton(r, b)
+                state |= Active | Focused
+                env.Draw() <- drawButton(r, text, icon, *bs, state)
+            case !e.In(r) && state&Focused != 0:
+                state &^= Focused
+                env.Draw() <- drawButton(r, text, icon, *bs, state)
             }
         case win.MoUp:
-            if e.In(r) && b.pressed {
-                in <- event
-                b.pressed = false
-                env.Draw() <- drawButton(r, b)
+            if e.In(r) && state&Active != 0 {
+                click <- e
+                state &^= Active
+                env.Draw() <- drawButton(r, text, icon, *bs, state)
             }
         }
-    }
-}
-
-type buttonData struct {
-    text  string
-    icon  *oksvg.SvgIcon
-    style *ButtonStyle
-    
-    hovered, pressed, focused, disabled bool
-}
-
-func drawButton(r image.Rectangle, b buttonData) Drawer {
-    
-    return func(d draw.Image) image.Rectangle {
-        switch {
-        case b.disabled:
-            drawButtonState(d, r, b, b.style.Disabled)
-            return r
-        case b.pressed:
-            drawButtonState(d, r, b, b.style.Active)
-        case b.hovered:
-            drawButtonState(d, r, b, b.style.Hover)
-        default:
-            drawButtonState(d, r, b, b.style.Default)
-        }
-        if b.focused {
-            drawButtonState(d, r, b, b.style.Focus)
-        }
-        return r
     }
 }
 
@@ -106,47 +65,74 @@ type ButtonStyle struct {
     IconSize                                int
 }
 
-type ButtonStateStyle struct {
-    Background                       color.Color
-    Border                           Border
-    InsetColor, TextColor, IconColor color.Color
+func drawButton(r image.Rectangle, text string, icon Icon, s ButtonStyle, state State) Drawer {
+    if state&Disabled != 0 {
+        return drawButtonState(r, text, icon, *s.Disabled, *s.TextStyle, s.IconSize)
+    }
+    var base Drawer
+    switch {
+    case state&Active != 0:
+        base = drawButtonState(r, text, icon, *s.Active, *s.TextStyle, s.IconSize)
+    case state&Hover != 0:
+        base = drawButtonState(r, text, icon, *s.Hover, *s.TextStyle, s.IconSize)
+    default:
+        base = drawButtonState(r, text, icon, *s.Default, *s.TextStyle, s.IconSize)
+    }
+    if state&Focused != 0 {
+        focus := drawButtonState(r, text, icon, *s.Focus, *s.TextStyle, s.IconSize)
+        return func(d draw.Image) image.Rectangle {
+            base(d)
+            focus(d)
+            return r
+        }
+    }
+    return base
 }
 
-func drawButtonState(d draw.Image, r image.Rectangle, b buttonData, s *ButtonStateStyle) {
-    if s.Background != nil {
-        DrawRect(d, r, s.Background)
-    }
-    if s.Border != (Border{}) {
-        DrawBorder(d, r, s.Border)
-    }
-    if s.InsetColor != nil {
-        DrawBorder(
-            d, image.Rect(
-                r.Min.X+s.Border.Width, r.Min.Y+s.Border.Width,
-                r.Max.X-s.Border.Width, r.Max.Y-s.Border.Width,
-            ), Border{Color: s.InsetColor},
-        )
-    }
-    if b.text != "" && s.TextColor != nil && b.style.TextStyle != nil {
-        marginLeft := 16
-        DrawText(d, image.Rect(
-            r.Min.X+marginLeft, (r.Min.Y+r.Max.Y-b.style.TextStyle.LineHeight)/2,
-            r.Max.X, (r.Min.Y+r.Max.Y+b.style.TextStyle.LineHeight)/2,
-        ), b.text, s.TextColor, b.style.TextStyle)
-    }
-    if b.icon != nil && s.IconColor != nil {
-        if b.text != "" {
-            const marginRight = 16
-            DrawIcon(d, image.Rect(
-                r.Max.X-marginRight-b.style.IconSize, (r.Min.Y+r.Max.Y)/2-b.style.IconSize/2,
-                r.Max.X-marginRight, (r.Min.Y+r.Max.Y)/2+b.style.IconSize/2,
-            ), s.IconColor, b.icon)
-        } else {
-            DrawIcon(d, image.Rect(
-                (r.Min.X+r.Max.X)/2-b.style.IconSize/2, (r.Min.Y+r.Max.Y)/2-b.style.IconSize/2,
-                (r.Min.X+r.Max.X)/2+b.style.IconSize/2, (r.Min.Y+r.Max.Y)/2+b.style.IconSize/2,
-            ), s.IconColor, b.icon)
+type ButtonStateStyle struct {
+    Background                  color.Color
+    Border                      Border
+    Inset, TextColor, IconColor color.Color
+}
+
+func drawButtonState(r image.Rectangle, text string, icon Icon, s ButtonStateStyle, ts TextStyle, is int) Drawer {
+    return func(d draw.Image) image.Rectangle {
+        if s.Background != nil {
+            DrawRect(d, r, s.Background)
         }
+        if s.Border != (Border{}) {
+            DrawBorder(d, r, s.Border)
+        }
+        if s.Inset != nil {
+            DrawBorder(
+                d, image.Rect(
+                    r.Min.X+s.Border.Width, r.Min.Y+s.Border.Width,
+                    r.Max.X-s.Border.Width, r.Max.Y-s.Border.Width,
+                ), Border{Color: s.Inset},
+            )
+        }
+        if text != "" && s.TextColor != nil {
+            marginLeft := 16
+            DrawText(d, image.Rect(
+                r.Min.X+marginLeft, (r.Min.Y+r.Max.Y-ts.LineHeight)/2,
+                r.Max.X, (r.Min.Y+r.Max.Y+ts.LineHeight)/2,
+            ), text, s.TextColor, ts)
+        }
+        if icon != (Icon{}) && s.IconColor != nil {
+            if text != "" {
+                const marginRight = 16
+                icon.Draw(d, image.Rect(
+                    r.Max.X-marginRight-is, (r.Min.Y+r.Max.Y)/2-is/2,
+                    r.Max.X-marginRight, (r.Min.Y+r.Max.Y)/2+is/2,
+                ), s.IconColor)
+            } else {
+                icon.Draw(d, image.Rect(
+                    (r.Min.X+r.Max.X)/2-is/2, (r.Min.Y+r.Max.Y)/2-is/2,
+                    (r.Min.X+r.Max.X)/2+is/2, (r.Min.Y+r.Max.Y)/2+is/2,
+                ), s.IconColor)
+            }
+        }
+        return r
     }
 }
 
@@ -168,8 +154,8 @@ func PrimaryButton() *ButtonStyle {
             IconColor:  Icon3(),
         },
         Focus: &ButtonStateStyle{
-            Border:     Border{Color: Focus(), Width: 2},
-            InsetColor: UiBackground(),
+            Border: Border{Color: Focus(), Width: 2},
+            Inset:  UiBackground(),
         },
         Disabled: &ButtonStateStyle{
             Background: Disabled2(),
@@ -199,8 +185,8 @@ func SecondaryButton() *ButtonStyle {
             IconColor:  Icon3(),
         },
         Focus: &ButtonStateStyle{
-            Border:     Border{Color: Focus(), Width: 2},
-            InsetColor: UiBackground(),
+            Border: Border{Color: Focus(), Width: 2},
+            Inset:  UiBackground(),
         },
         Disabled: &ButtonStateStyle{
             Background: Disabled2(),
@@ -233,7 +219,7 @@ func TertiaryButton(background color.Color) *ButtonStyle {
         Focus: &ButtonStateStyle{
             Background: Interactive3(),
             Border:     Border{Color: Focus(), Width: 2},
-            InsetColor: UiBackground(),
+            Inset:      UiBackground(),
             TextColor:  Text4(),
             IconColor:  Icon3(),
         },
@@ -296,8 +282,8 @@ func DangerButton() *ButtonStyle {
             IconColor:  Icon3(),
         },
         Focus: &ButtonStateStyle{
-            Border:     Border{Focus(), 2},
-            InsetColor: UiBackground(),
+            Border: Border{Focus(), 2},
+            Inset:  UiBackground(),
         },
         Disabled: &ButtonStateStyle{
             Background: Disabled2(),
@@ -365,5 +351,6 @@ func HeaderButton() *ButtonStyle {
             IconColor:  Disabled3(),
         },
         TextStyle: BodyShort14(),
+        IconSize:  20,
     }
 }
